@@ -212,7 +212,7 @@ IMPORTANT:
     const selectedCriteria = (request.selectedCriteria?.length
       ? request.selectedCriteria
       : ALL_CRITERIA) as AssessmentCriterion[];
-    const feedbackLength = (request.feedbackLengthMinutes ?? 10) as FeedbackLengthMinutes;
+    const feedbackLength = (request.feedbackLengthMinutes ?? 5) as FeedbackLengthMinutes;
 
     try {
       const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
@@ -238,9 +238,9 @@ PERSONALIZATION RULES (MANDATORY):
    - Maximum 5 points. Each point is ONE short actionable bullet — not a wall of text.
    - Do NOT dump ALL-CAPS section labels into one paragraph.
 3. Feedback length tiers:
-   - 5 min: synopsis + up to 3 short points; skip or heavily trim enhanced_argument / long counters.
-   - 10 min: synopsis + up to 5 points; moderate missing_points (≤3).
-   - 15 min: synopsis + up to 5 detailed points; fuller enhanced_feedback and counters.
+   - 2 min: synopsis + up to 3 short points; skip or heavily trim enhanced_argument / long counters.
+   - 5 min: synopsis + up to 5 points; moderate missing_points (≤3).
+   - 7 min: synopsis + up to 5 detailed points; fuller enhanced_feedback and counters.
 4. Unselected criteria: set score to 0 and omit feedback (or empty object).
 
 OUTPUT FORMAT - Prefer JSON:
@@ -254,13 +254,13 @@ OUTPUT FORMAT - Prefer JSON:
   "delivery_score": <0-5 or 0 if not selected>,
   "delivery_feedback": { "synopsis": "...", "points": ["..."] },
   "missing_points": ["point1"],
-  "enhanced_argument": "text (brief for 5-min tier)",
+  "enhanced_argument": "text (brief for 2-min tier)",
   "enhanced_feedback": {}
 }
 
 You MUST provide SPECIFIC, ACTIONABLE feedback. NO vague feedback. NO unsourced statistics.
-${feedbackLength === 5 ? "Keep the entire response concise — student only budgeted ~5 minutes of reading." : ""}
-${feedbackLength >= 10 ? "Include up to 3 counterarguments and 3 defense strategies when useful." : "Skip long counterargument/defense sections for this short feedback tier."}
+${feedbackLength === 2 ? "Keep the entire response concise — student only budgeted ~2 minutes of reading." : ""}
+${feedbackLength >= 5 ? "Include up to 3 counterarguments and 3 defense strategies when useful." : "Skip long counterargument/defense sections for this short feedback tier."}
 
 ${prompt}`
               }
@@ -473,8 +473,12 @@ ${prompt}`
     const selected = (request.selectedCriteria?.length
       ? request.selectedCriteria
       : ALL_CRITERIA) as AssessmentCriterion[];
-    const feedbackLength = (request.feedbackLengthMinutes ?? 10) as FeedbackLengthMinutes;
-    const maxPoints = feedbackLength === 5 ? 3 : 5;
+    const feedbackLength = (request.feedbackLengthMinutes ?? 5) as FeedbackLengthMinutes;
+    const maxPoints = feedbackLength === 2 ? 2 : 5;
+    const maxSynopsisChars = feedbackLength === 2 ? 110 : undefined;
+    const maxPointChars = feedbackLength === 2 ? 90 : undefined;
+    const truncate = (text: string, max?: number) =>
+      max && text.length > max ? `${text.slice(0, max - 1)}…` : text;
 
     const score = {
       logic: selected.includes("logic") ? result.score.logic : 0,
@@ -488,8 +492,8 @@ ${prompt}`
     const trimFb = (fb: CriterionFeedback | undefined): CriterionFeedback | undefined => {
       if (!fb) return undefined;
       return {
-        synopsis: fb.synopsis,
-        points: (fb.points || []).slice(0, maxPoints),
+        synopsis: truncate(fb.synopsis, maxSynopsisChars),
+        points: (fb.points || []).slice(0, maxPoints).map((p) => truncate(p, maxPointChars)),
       };
     };
 
@@ -505,18 +509,19 @@ ${prompt}`
     let enhancedArgument = result.enhancedArgument;
     let enhancedFeedback = result.enhancedFeedback;
 
-    if (feedbackLength === 5) {
-      missingPoints = missingPoints.slice(0, 2);
-      if (enhancedArgument && enhancedArgument.length > 600) {
-        enhancedArgument = `${enhancedArgument.slice(0, 597)}…`;
-      }
+    if (feedbackLength === 2) {
+      // The 2-minute tier's UI never shows enhanced argument / counters / defense / strategy
+      // sections (see ScoreDisplay's `shortTier`), so there's no reason to keep them at all —
+      // trimming them to nothing also avoids wasting generation time on unread content.
+      missingPoints = missingPoints.slice(0, 1).map((p) => truncate(p, 120));
+      enhancedArgument = "";
       enhancedFeedback = {
         ...enhancedFeedback,
-        counterArguments: (enhancedFeedback.counterArguments || []).slice(0, 1),
-        defenseStrategies: (enhancedFeedback.defenseStrategies || []).slice(0, 1),
-        strategicRecommendations: (enhancedFeedback.strategicRecommendations || []).slice(0, 2),
+        counterArguments: [],
+        defenseStrategies: [],
+        strategicRecommendations: [],
       };
-    } else if (feedbackLength === 10) {
+    } else if (feedbackLength === 5) {
       missingPoints = missingPoints.slice(0, 3);
       enhancedFeedback = {
         ...enhancedFeedback,
@@ -916,10 +921,10 @@ OUTPUT RULES:
     const selectedCriteria = (request.selectedCriteria?.length
       ? request.selectedCriteria
       : ALL_CRITERIA) as AssessmentCriterion[];
-    const feedbackLength = (request.feedbackLengthMinutes ?? 10) as FeedbackLengthMinutes;
-    const maxPoints = feedbackLength === 5 ? 3 : 5;
+    const feedbackLength = (request.feedbackLengthMinutes ?? 5) as FeedbackLengthMinutes;
+    const maxPoints = feedbackLength === 2 ? 3 : 5;
 
-    const stanceContext = request.stance 
+    const stanceContext = request.stance
       ? `\n\n⚠️ CRITICAL: The speaker is arguing ${request.stance.toUpperCase()} this motion. You MUST evaluate whether their arguments effectively support their chosen stance. If they argue ${request.stance === 'for' ? 'AGAINST' : 'FOR'} when they should argue ${request.stance.toUpperCase()}, this is a MAJOR flaw. Their logic, evidence, and rhetoric must align with arguing ${request.stance.toUpperCase()}.`
       : '\n\nNOTE: This is a neutral opinion piece (no specific stance required).';
 
@@ -1676,8 +1681,8 @@ Provide analysis in this EXACT JSON format (NO MARKDOWN, NO CODE BLOCKS, JUST PU
       {
         "rebuttal": "SECOND OPPONENT ATTACK: [Another powerful counterargument that targets a different weakness in their speech. Must be specific and reference their actual argument. 2-3 sentences.]",
         "strength_level": "High",
-        "supporting_evidence": "THEIR EVIDENCE: [Specific data, statistics, or case studies with sources. Must include numbers and dates.]",
-        "common_sources": "THEIR SOURCES: [Where this argument commonly appears - specific publications, experts, or research]",
+        "supporting_evidence": "THEIR LOGIC: [The logical reasoning or framework the opponent would use — never invented statistics or dates.]",
+        "common_sources": "TYPICAL ORIGIN: [What TYPE of source this argument commonly comes from, e.g. 'policy critiques' — not a fabricated citation]",
         "key_points": [
           "KEY POINT 1: [Specific talking point for this counterargument]",
           "KEY POINT 2: [Another specific talking point with evidence]",
@@ -1712,9 +1717,9 @@ Provide analysis in this EXACT JSON format (NO MARKDOWN, NO CODE BLOCKS, JUST PU
       },
       {
         "preemptive_defense": "NEUTRALIZE #2: '[EXACT WORD-FOR-WORD preemptive framing for counterargument #2. Include where to place it in speech. 2-3 sentences, ready to use.]",
-        "direct_response": "COUNTER #2: '[EXACT WORD-FOR-WORD response with specific evidence. Include actual statistics and quotes. 3-4 sentences, ready to deliver.]",
-        "redirect_technique": "REFRAME #2: '[EXACT WORD-FOR-WORD technique to turn their attack into your advantage. Example format. 3-4 sentences, actionable.]",
-        "evidence_arsenal": "DATA DUMP #2: '[List 3-4 specific pieces of evidence with full attribution: statistics, expert quotes, case studies. Each with source, date, and specific numbers.]",
+        "direct_response": "COUNTER #2: '[EXACT WORD-FOR-WORD response using logical reasoning — never invented statistics or quotes. 2-3 sentences, ready to deliver.]",
+        "redirect_technique": "REFRAME #2: '[EXACT WORD-FOR-WORD technique to turn their attack into your advantage. Example format. 2-3 sentences, actionable.]",
+        "evidence_arsenal": "LOGIC ARSENAL #2: '[List 2-3 logical reasoning strategies to use — never invented statistics, quotes, or sources.]",
         "key_points": [
           "TALKING POINT 1: [Specific point for countering argument #2]",
           "TALKING POINT 2: [Another specific point with evidence]",
@@ -1725,9 +1730,9 @@ Provide analysis in this EXACT JSON format (NO MARKDOWN, NO CODE BLOCKS, JUST PU
       },
       {
         "preemptive_defense": "ADDRESS #3: '[EXACT WORD-FOR-WORD how to handle counterargument #3 proactively. Include placement in speech. 2-3 sentences, ready to use.]",
-        "direct_response": "REFUTE #3: '[EXACT WORD-FOR-WORD direct counter with specifics. Include actual data and examples. 3-4 sentences, ready to deliver.]",
-        "redirect_technique": "SPIN #3: '[EXACT WORD-FOR-WORD reframing technique. Complete sentences, actionable. 3-4 sentences.]",
-        "evidence_arsenal": "PROOF #3: '[List 3-4 specific pieces of evidence with full attribution. Each with source, date, numbers/quotes. Ready to use.]",
+        "direct_response": "REFUTE #3: '[EXACT WORD-FOR-WORD direct counter using logical reasoning — never invented data. 2-3 sentences, ready to deliver.]",
+        "redirect_technique": "SPIN #3: '[EXACT WORD-FOR-WORD reframing technique. Complete sentences, actionable. 2-3 sentences.]",
+        "evidence_arsenal": "LOGIC #3: '[List 2-3 logical reasoning strategies — never invented statistics, dates, or quotes. Ready to use.]",
         "key_points": [
           "TALKING POINT 1: [Specific point for countering argument #3]",
           "TALKING POINT 2: [Another specific point]",
@@ -1758,59 +1763,53 @@ CRITICAL REQUIREMENTS FOR ACCURACY:
 - NO vague feedback like "be better" - give SPECIFIC strategies with exact wording
 - Enhanced argument should be dramatically improved, not just polished - rewrite with real statistics and examples
 
-CRITICAL - MANDATORY SECTIONS - THESE MUST ALWAYS BE INCLUDED:
+CRITICAL - MANDATORY SECTIONS - SCALE EVERYTHING TO THE ${feedbackLength}-MINUTE FEEDBACK TIER. This overrides any instinct to be exhaustive — the ${feedbackLength}-minute tier is read in ${feedbackLength} minutes, not 5 or 7.
 
-1. "missing_points": MUST provide at least 3-5 specific points they missed. Each should be a logical argument, premise gap, or reasoning framework they could add.
+1. "missing_points": ${feedbackLength === 2 ? "Provide exactly 1 short point (one sentence, under 20 words)." : feedbackLength === 5 ? "Provide 2-3 specific points, each 1 sentence." : "Provide 3-5 specific points."} Each should be a logical argument, premise gap, or reasoning framework they could add.
 
-2. "enhanced_argument": MUST provide a completely rewritten version of their speech with improved logical structure, rhetorical devices, and addressing counterarguments.
+2. "enhanced_argument": ${feedbackLength === 2 ? 'SKIP this entirely — return "" (empty string). The 2-minute tier UI never shows it, so do not spend output on it.' : feedbackLength === 5 ? "Provide a rewritten version, 100-150 words." : "Provide a completely rewritten version of their speech, 200+ words."} with improved logical structure and reasoning (when included).
 
-3. "enhanced_feedback.counter_arguments": MUST provide EXACTLY 3 counterarguments. Each MUST:
-   - Include "rebuttal" (2-3 sentences of what opponent would say)
+3. "enhanced_feedback.counter_arguments": ${feedbackLength === 2 ? 'SKIP entirely — return [] (empty array). Not shown in the 2-minute tier.' : feedbackLength === 5 ? "Provide EXACTLY 2 counterarguments." : "Provide EXACTLY 3 counterarguments."} Each item MUST:
+   - Include "rebuttal" (1-2 sentences of what opponent would say)
    - Include "strength_level" ("High", "Medium", or "Low")
-   - Include "supporting_logic" (logical reasoning opponent would use)
-   - Include "logical_frameworks" (reasoning approaches like deductive, inductive, etc.)
-   - Include "key_points" array with 4 specific logical talking points
+   - Include "supporting_evidence" (the LOGICAL reasoning/framework the opponent would use — never invented statistics, dates, or sources)
+   - Include "common_sources" (what TYPE of source this argument typically comes from, e.g. "policy analysis" — not a fabricated citation)
+   - Include "key_points" array with 2-4 specific logical talking points
 
-4. "enhanced_feedback.defense_strategies": MUST provide EXACTLY 3 defense strategies (one for each counterargument). Each MUST:
-   - Include "preemptive_defense" (2-3 sentences, word-for-word phrases)
-   - Include "direct_response" (3-4 sentences, ready to use)
-   - Include "redirect_technique" (3-4 sentences, reframing technique)
-   - Include "logical_arsenal" (3-4 logical approaches to use)
-   - Include "key_points" array with 4 specific talking points
+4. "enhanced_feedback.defense_strategies": ${feedbackLength === 2 ? 'SKIP entirely — return [] (empty array). Not shown in the 2-minute tier.' : feedbackLength === 5 ? "Provide EXACTLY 2 defense strategies (one per counterargument)." : "Provide EXACTLY 3 defense strategies (one per counterargument)."} Each item MUST:
+   - Include "preemptive_defense" (1-2 sentences, word-for-word phrasing)
+   - Include "direct_response" (2-3 sentences, ready to use)
+   - Include "redirect_technique" (2-3 sentences, reframing technique)
+   - Include "evidence_arsenal" (2-3 LOGICAL reasoning strategies to use — never invented statistics or fabricated sources)
+   - Include "key_points" array with 2-4 specific talking points
 
-5. "enhanced_feedback.argument_analysis": MUST include:
-   - "logical_structure" (detailed breakdown)
-   - "reasoning_quality" (assessment of reasoning types used)
+5. "enhanced_feedback.argument_analysis": MUST include, each field kept to ${feedbackLength === 2 ? "one short sentence" : feedbackLength === 5 ? "1-2 sentences" : "2-3 sentences"}:
+   - "logical_structure"
+   - "evidence_quality"
    - "clarity_score" (1-10 number)
-   - "persuasiveness" (concrete analysis)
+   - "persuasiveness"
 
-6. "enhanced_feedback.strategic_recommendations": MUST provide at least 5-7 strategic recommendations
+6. "enhanced_feedback.strategic_recommendations": ${feedbackLength === 2 ? "SKIP entirely — return [] (empty array)." : feedbackLength === 5 ? "Provide 2-4 strategic recommendations." : "Provide 5-7 strategic recommendations."}
 
-ALL THESE SECTIONS ARE REQUIRED - DO NOT OMIT ANY OF THEM. If a section seems difficult, provide reasonable defaults but always include the structure.
+Every field must still be present in the JSON (use "" or [] for skipped sections) — but never pad a short-tier section with extra length just to fill space. Brevity is a requirement, not a shortcoming, for the 2 and 5-minute tiers.
 
 VALIDATION CHECKLIST - Before returning JSON, verify:
-✓ Every counter_argument.rebuttal is 2-3 sentences and references their actual speech
-✓ Every counter_argument.supporting_evidence includes specific numbers, dates, and source names
-✓ Every counter_argument.key_points has 4 specific talking points (opponent's key arguments)
-✓ Every defense_strategy.direct_response is 3-4 sentences with exact wording
-✓ Every defense_strategy.evidence_arsenal lists 3-4 specific pieces of evidence with sources
-✓ Every defense_strategy.key_points has 4 specific talking points (speaker's defense points)
+✓ Every counter_argument.rebuttal references their actual speech (length matches the tier rules above)
+✓ Every counter_argument.supporting_evidence describes LOGICAL reasoning or a reasoning framework — NEVER invented numbers, dates, or source names
+✓ Every defense_strategy.evidence_arsenal lists LOGICAL reasoning strategies — NEVER invented statistics or fabricated sources
 ✓ All feedback points are specific and actionable (no vague phrases)
 ✓ All feedback references exact quotes from their transcript
-✓ All arrays have at least 3 items
-✓ Counter and defense key_points lists each have exactly 4 entries and are directly reused in the enhanced argument/defense narratives
-✓ All key_points are specific, actionable, and include evidence or exact wording
+✓ For the 2-minute tier: enhanced_argument, counter_arguments, defense_strategies, and strategic_recommendations are all empty ("" / []) — nothing more, nothing less
+✓ key_points arrays are specific, actionable, and reference logical reasoning — not fabricated evidence
 
 FINAL REMINDER - CRITICAL FOR QUALITY:
 1. Every single feedback point MUST quote their exact words from the transcript
 2. Every suggestion MUST include exact word-for-word replacements, not vague advice
-3. counter_arguments MUST be 3 detailed counterarguments (2-3 sentences each) with specific statistics and sources
-4. counter_arguments.key_points MUST be 4 specific talking points the opponent will use (each with evidence/statistics)
-5. defense_strategies MUST be 3 complete defense strategies (3-4 sentences each) with exact word-for-word phrases ready to use
-6. defense_strategies.key_points MUST be 4 specific talking points the speaker should use (each with exact wording, stats, or quotes ready to deliver)
-7. NO generic feedback like "improve your argument" - MUST be specific: "Your premise '[exact quote]' needs [specific statistic] from [source]"
-8. If any section seems incomplete, expand it until it meets the minimum requirements
-9. Explicitly reuse each counter/defense key_point inside the enhanced argument and defense responses so the points are actionable in performance
+3. counter_arguments and defense_strategies MUST follow the ${feedbackLength}-minute tier counts set in "CRITICAL - MANDATORY SECTIONS" above — do NOT default to 3 regardless of tier
+4. Every counter_argument/defense_strategy MUST rely on LOGICAL reasoning, never invented statistics, dates, or sources — if a fact would help, say "you should research and cite [type of source]" instead of inventing one
+5. NO generic feedback like "improve your argument" - MUST be specific: "Your premise '[exact quote]' creates a logical gap because [reason] — restructure as [specific logical fix]"
+6. For the 2-minute tier, do NOT expand sections to "meet a minimum" — empty ("" / []) is the correct, complete answer for enhanced_argument, counter_arguments, defense_strategies, and strategic_recommendations
+7. Explicitly reuse each counter/defense key_point inside the enhanced argument and defense responses (when those sections are included for this tier) so the points are actionable in performance
 
 OUTPUT FORMAT REQUIREMENTS - CRITICAL:
 
@@ -1847,19 +1846,19 @@ REQUIRED JSON STRUCTURE:
         "strength_level": "High|Medium|Low",
         "supporting_evidence": "<logical reasoning opponent would use>",
         "common_sources": "<where opponent finds this>",
-        "key_points": ["point1", "point2", "point3", "point4"]
+        "key_points": ["point1", "point2", ...]
       },
-      ... (must have 3 counterarguments)
+      ... (item count per the ${feedbackLength}-minute tier rules above — [] if this tier skips it)
     ],
     "defense_strategies": [
       {
-        "preemptive_defense": "<2-3 sentences ready to use>",
-        "direct_response": "<3-4 sentences ready to use>",
-        "redirect_technique": "<3-4 sentences ready to use>",
-        "evidence_arsenal": "<logical approaches and evidence>",
-        "key_points": ["point1", "point2", "point3", "point4", "point5"]
+        "preemptive_defense": "<1-2 sentences ready to use>",
+        "direct_response": "<2-3 sentences ready to use>",
+        "redirect_technique": "<2-3 sentences ready to use>",
+        "evidence_arsenal": "<logical approaches, never fabricated evidence>",
+        "key_points": ["point1", "point2", ...]
       },
-      ... (must have 3 defense strategies)
+      ... (item count per the ${feedbackLength}-minute tier rules above — [] if this tier skips it)
     ],
     "strategic_recommendations": ["rec1", "rec2", ...]
   }
@@ -1867,12 +1866,9 @@ REQUIRED JSON STRUCTURE:
 
 CRITICAL REQUIREMENTS:
 1. Return ONLY valid JSON - no markdown, no code blocks, no explanatory text
-2. enhanced_argument MUST be a substantial rewritten version (200+ words minimum)
-3. counter_arguments MUST have exactly 3 items, each with all fields filled
-4. defense_strategies MUST have exactly 3 items, each with all fields filled
-5. All arrays must have at least 3 items
-6. All text fields must be substantial (not empty strings)
-7. Use proper JSON escaping for quotes and newlines
+2. Follow the ${feedbackLength}-minute tier counts/lengths from "CRITICAL - MANDATORY SECTIONS" above exactly — for the 2-minute tier that means enhanced_argument is "" and counter_arguments/defense_strategies/strategic_recommendations are [], NOT padded to meet a word or item count
+3. Where a section IS included for this tier, every field in it must be filled with real content (not a placeholder)
+4. Use proper JSON escaping for quotes and newlines
 
 DO NOT wrap the JSON in markdown code blocks. Return the raw JSON object only.
 `;

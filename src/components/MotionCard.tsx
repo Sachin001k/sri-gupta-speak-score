@@ -49,7 +49,7 @@ interface MotionCardProps {
 export function MotionCard({ motion, onStartSpeech, isLoggedIn = false }: MotionCardProps) {
   const [selectedStance, setSelectedStance] = useState<string>("");
   const [selectedDuration, setSelectedDuration] = useState<number>(60);
-  const [feedbackLength, setFeedbackLength] = useState<FeedbackLengthMinutes>(10);
+  const [feedbackLength, setFeedbackLength] = useState<FeedbackLengthMinutes>(5);
   const [selectedCriteria, setSelectedCriteria] = useState<Set<AssessmentCriterion>>(
     () => new Set(ALL_CRITERIA),
   );
@@ -171,7 +171,7 @@ export function MotionCard({ motion, onStartSpeech, isLoggedIn = false }: Motion
             How long do you want to spend reading feedback after your speech?
           </p>
           <div className="grid grid-cols-3 gap-2">
-            {([5, 10, 15] as FeedbackLengthMinutes[]).map((mins) => (
+            {([2, 5, 7] as FeedbackLengthMinutes[]).map((mins) => (
               <Button
                 key={mins}
                 variant={feedbackLength === mins ? "default" : "outline"}

@@ -85,6 +85,24 @@ const Index = () => {
     const random = pickRandom(allMotionsData, 2, [daily.id]);
     return [daily, ...random];
   });
+  const [streak, setStreak] = useState<number | null>(null);
+
+  useEffect(() => {
+    const loadStreak = async () => {
+      if (!user) {
+        setStreak(null);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("user_progress")
+        .select("current_streak")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (error) return;
+      setStreak((data as any)?.current_streak ?? 0);
+    };
+    loadStreak();
+  }, [user]);
 
   useEffect(() => {
     const loadTopics = async () => {
@@ -348,7 +366,7 @@ const Index = () => {
         <div className="relative max-w-4xl mx-auto px-4 py-16 text-center">
           <div className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-full px-4 py-2 mb-6">
             <Sparkles className="w-4 h-4" />
-            <span className="text-sm font-medium">Duolingo for Public Speaking</span>
+            <span className="text-sm font-medium">Public speaking practice, gamified</span>
           </div>
           
           <h1 className="text-5xl md:text-6xl font-bold mb-6 leading-tight">
@@ -504,6 +522,26 @@ const Index = () => {
             ))}
           </div>
         </div>
+
+        {/* Streak */}
+        {user && streak !== null && (
+          <div className="flex justify-center mb-8">
+            <div className="inline-flex items-center gap-3 bg-speech-card border border-border rounded-full px-5 py-3 shadow-card">
+              <span className="text-2xl" role="img" aria-label="fire">
+                🔥
+              </span>
+              {streak > 0 ? (
+                <span className="text-lg font-semibold text-foreground">
+                  {streak} day streak — keep it going!
+                </span>
+              ) : (
+                <span className="text-lg font-semibold text-foreground">
+                  Start your streak today
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Refresh Topics */}
         <div className="text-center">

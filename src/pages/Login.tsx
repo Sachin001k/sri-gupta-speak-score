@@ -231,7 +231,13 @@ const Login = () => {
             {/* Footer Links */}
             <div className="mt-6 text-center">
               <p className="text-sm text-muted-foreground">
-                Accounts are created by the admin. If you need access, contact support.
+                Don't have an account?{' '}
+                <Link
+                  to="/signup"
+                  className="font-medium text-primary hover:text-primary/90 transition-colors"
+                >
+                  Sign up
+                </Link>
               </p>
             </div>
 

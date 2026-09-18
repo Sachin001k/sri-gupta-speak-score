@@ -82,7 +82,7 @@ export function generateMockScore(
   const selected = options?.selectedCriteria?.length
     ? options.selectedCriteria
     : ALL_CRITERIA;
-  const feedbackLength = options?.feedbackLengthMinutes ?? 10;
+  const feedbackLength = options?.feedbackLengthMinutes ?? 5;
 
   const baseLogic = Math.floor(Math.random() * 3) + 6;
   const baseRhetoric = Math.floor(Math.random() * 3) + 6;
@@ -98,7 +98,7 @@ export function generateMockScore(
   };
   score.total = totalScoreForCriteria(score, selected);
 
-  const maxPoints = feedbackLength === 5 ? 3 : 5;
+  const maxPoints = feedbackLength === 2 ? 3 : 5;
   const feedback: StructuredFeedback = {
     overall: `Your speech scored ${score.total}/${selected.reduce((s, c) => s + CRITERION_MAX[c], 0)}.`,
   };
@@ -146,7 +146,7 @@ export function generateMockScore(
   const transcript = providedTranscript || generateMockTranscript(motion, stance);
   const missingPoints = generateMissingPoints(motion, stance).slice(
     0,
-    feedbackLength === 5 ? 2 : 4,
+    feedbackLength === 2 ? 2 : 4,
   );
   const enhancedArgument = generateEnhancedArgument(motion, missingPoints, stance);
 

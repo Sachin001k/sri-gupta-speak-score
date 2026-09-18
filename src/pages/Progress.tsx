@@ -638,7 +638,7 @@ const Progress = () => {
                       const length =
                         session.feedback_length_minutes ||
                         session.feedback?.feedbackLengthMinutes ||
-                        10;
+                        5;
                       const points = 10;
                       return (
                         <Card key={session.id} className="border-l-4 border-l-primary">
@@ -749,7 +749,7 @@ const Progress = () => {
                     feedbackLengthMinutes={
                       (selectedSession.feedback_length_minutes ||
                         selectedSession.feedback?.feedbackLengthMinutes ||
-                        10) as FeedbackLengthMinutes
+                        5) as FeedbackLengthMinutes
                     }
                     audioUrl={selectedSession.audio_url}
                     hideActions

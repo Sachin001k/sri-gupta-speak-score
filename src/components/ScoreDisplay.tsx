@@ -82,7 +82,7 @@ export function ScoreDisplay({
   enhancedArgument,
   enhancedFeedback,
   selectedCriteria,
-  feedbackLengthMinutes = 10,
+  feedbackLengthMinutes = 5,
   audioUrl,
   onTryAgain, 
   onNewTopic,
@@ -91,7 +91,7 @@ export function ScoreDisplay({
   const criteria = (selectedCriteria?.length ? selectedCriteria : ALL_CRITERIA) as AssessmentCriterion[];
   const maxScore = criteria.reduce((sum, c) => sum + CRITERION_MAX[c], 0);
   const totalScore = criteria.reduce((sum, c) => sum + (Number(score[c]) || 0), 0);
-  const shortTier = feedbackLengthMinutes <= 5;
+  const shortTier = feedbackLengthMinutes <= 2;
   
   const getScoreColor = (points: number, max: number) => {
     const percentage = (points / max) * 100;

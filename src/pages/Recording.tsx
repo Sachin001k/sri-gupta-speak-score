@@ -22,10 +22,10 @@ const Recording = () => {
   const duration: number = location.state?.duration || 60;
   const stance: string | undefined = location.state?.stance;
   const feedbackLengthMinutes: FeedbackLengthMinutes =
-    location.state?.feedbackLengthMinutes === 5 ||
-    location.state?.feedbackLengthMinutes === 15
+    location.state?.feedbackLengthMinutes === 2 ||
+    location.state?.feedbackLengthMinutes === 7
       ? location.state.feedbackLengthMinutes
-      : 10;
+      : 5;
   const selectedCriteria: AssessmentCriterion[] = Array.isArray(
     location.state?.selectedCriteria,
   )

@@ -2,7 +2,7 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "vybyyhmaaiurjrbusqch";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://vybyyhmaaiurjrbusqch.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ5Ynl5aG1hYWl1cmpyYnVzcWNoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUzNDQyMTAsImV4cCI6MjA3MDkyMDIxMH0.4xgrMlFd5Vzcz51sQwVs3wLIp3oBjnS2O4nciA5QzmI";
 
 if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
