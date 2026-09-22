@@ -20,6 +20,8 @@ import {
 } from "@/types/feedback";
 import { saveDebateSession } from "@/services/debateSessionService";
 import { buildSpeakerProfileContext } from "@/services/speakerProfile";
+import { generateMockScore } from "@/utils/mockScoring";
+import { toast } from "@/hooks/use-toast";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -179,6 +181,25 @@ const Index = () => {
 
     setSessionData({ ...sessionData, audioBlob });
 
+    const finishSession = async (results: any, cleanTranscript: string) => {
+      setScoreData(results);
+      setCurrentState("results");
+
+      if (user) {
+        await saveDebateSession({
+          userId: user.id,
+          motion: sessionData.motion,
+          stance: sessionData.stance,
+          duration: sessionData.duration,
+          transcript: cleanTranscript,
+          results,
+          audioBlob,
+          feedbackLengthMinutes: sessionData.feedbackLengthMinutes,
+          selectedCriteria: sessionData.selectedCriteria,
+        });
+      }
+    };
+
     if (transcript && transcript.trim().length > 20) {
       setIsAnalyzing(true);
       try {
@@ -194,33 +215,40 @@ const Index = () => {
           selectedCriteria: sessionData.selectedCriteria,
           speakerProfileContext,
         });
-        setScoreData(results);
-        setCurrentState("results");
-
-        if (user) {
-          await saveDebateSession({
-            userId: user.id,
-            motion: sessionData.motion,
-            stance: sessionData.stance,
-            duration: sessionData.duration,
-            transcript,
-            results,
-            audioBlob,
+        await finishSession(results, transcript);
+      } catch (error) {
+        // Never discard a completed recording just because AI scoring failed —
+        // fall back to a preliminary mock score (same as the /recording page
+        // already does) and tell the user what happened, instead of silently
+        // bouncing them back to "Start Recording" with their speech gone.
+        console.error("AI analysis failed:", error);
+        toast({
+          title: "AI scoring unavailable",
+          description:
+            "We couldn't reach the AI scorer, so here's a preliminary score instead. Your recording wasn't lost.",
+          variant: "destructive",
+        });
+        const results = generateMockScore(
+          audioBlob,
+          sessionData.motion.topic,
+          sessionData.stance,
+          transcript,
+          {
             feedbackLengthMinutes: sessionData.feedbackLengthMinutes,
             selectedCriteria: sessionData.selectedCriteria,
-          });
-        }
-      } catch (error) {
-        console.error("AI analysis failed:", error);
-        resetSessionForRetry();
-        resetRecorderComponent();
-        setScoreData(null);
-        setCurrentState("recording");
+          },
+        );
+        await finishSession(results, transcript);
       } finally {
         setIsAnalyzing(false);
       }
     } else {
       console.warn("No valid transcript for AI analysis. Transcript:", transcript);
+      toast({
+        title: "No speech detected",
+        description: "We couldn't capture a transcript of your speech. Please try recording again.",
+        variant: "destructive",
+      });
       setScoreData(null);
       setCurrentState("recording");
       resetSessionForRetry();
