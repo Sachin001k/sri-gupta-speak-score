@@ -215,7 +215,7 @@ IMPORTANT:
     const feedbackLength = (request.feedbackLengthMinutes ?? 5) as FeedbackLengthMinutes;
 
     try {
-      const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
+      const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
       const payload = {
         contents: [
           {
@@ -600,7 +600,7 @@ ${prompt}`
     request: SpeechAnalysisRequest,
     apiKey: string
   ): Promise<ScoreResult> {
-    const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
+    const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
     const currentAnalysis = current.enhancedFeedback?.argumentAnalysis;
     const stance = (request.stance || 'neutral').toUpperCase();
 
@@ -807,7 +807,7 @@ OUTPUT RULES:
     generationConfig: { temperature?: number; maxOutputTokens?: number } = {},
   ): Promise<string> {
     const apiUrl =
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
 
     const payload = {
       contents: [{ parts: [{ text: prompt }] }],
