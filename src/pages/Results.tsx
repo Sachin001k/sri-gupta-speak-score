@@ -15,9 +15,9 @@ const Results = () => {
   const scoreData = location.state?.results;
   const feedbackLengthMinutes: FeedbackLengthMinutes =
     location.state?.feedbackLengthMinutes === 2 ||
-    location.state?.feedbackLengthMinutes === 7
+    location.state?.feedbackLengthMinutes === 5
       ? location.state.feedbackLengthMinutes
-      : scoreData?.feedbackLengthMinutes ?? 5;
+      : scoreData?.feedbackLengthMinutes ?? 3;
   const selectedCriteria: AssessmentCriterion[] = Array.isArray(
     location.state?.selectedCriteria,
   )

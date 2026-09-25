@@ -82,7 +82,7 @@ export function ScoreDisplay({
   enhancedArgument,
   enhancedFeedback,
   selectedCriteria,
-  feedbackLengthMinutes = 5,
+  feedbackLengthMinutes = 3,
   audioUrl,
   onTryAgain, 
   onNewTopic,

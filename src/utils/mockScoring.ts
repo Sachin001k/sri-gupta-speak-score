@@ -82,7 +82,7 @@ export function generateMockScore(
   const selected = options?.selectedCriteria?.length
     ? options.selectedCriteria
     : ALL_CRITERIA;
-  const feedbackLength = options?.feedbackLengthMinutes ?? 5;
+  const feedbackLength = options?.feedbackLengthMinutes ?? 3;
 
   const baseLogic = Math.floor(Math.random() * 3) + 6;
   const baseRhetoric = Math.floor(Math.random() * 3) + 6;

@@ -212,7 +212,7 @@ IMPORTANT:
     const selectedCriteria = (request.selectedCriteria?.length
       ? request.selectedCriteria
       : ALL_CRITERIA) as AssessmentCriterion[];
-    const feedbackLength = (request.feedbackLengthMinutes ?? 5) as FeedbackLengthMinutes;
+    const feedbackLength = (request.feedbackLengthMinutes ?? 3) as FeedbackLengthMinutes;
 
     try {
       const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
@@ -239,8 +239,8 @@ PERSONALIZATION RULES (MANDATORY):
    - Do NOT dump ALL-CAPS section labels into one paragraph.
 3. Feedback length tiers:
    - 2 min: synopsis + up to 3 short points; skip or heavily trim enhanced_argument / long counters.
-   - 5 min: synopsis + up to 5 points; moderate missing_points (≤3).
-   - 7 min: synopsis + up to 5 detailed points; fuller enhanced_feedback and counters.
+   - 3 min: synopsis + up to 5 points; moderate missing_points (≤3).
+   - 5 min: synopsis + up to 5 detailed points; fuller enhanced_feedback and counters.
 4. Unselected criteria: set score to 0 and omit feedback (or empty object).
 
 OUTPUT FORMAT - Prefer JSON:
@@ -260,7 +260,7 @@ OUTPUT FORMAT - Prefer JSON:
 
 You MUST provide SPECIFIC, ACTIONABLE feedback. NO vague feedback. NO unsourced statistics.
 ${feedbackLength === 2 ? "Keep the entire response concise — student only budgeted ~2 minutes of reading." : ""}
-${feedbackLength >= 5 ? "Include up to 3 counterarguments and 3 defense strategies when useful." : "Skip long counterargument/defense sections for this short feedback tier."}
+${feedbackLength >= 3 ? "Include up to 3 counterarguments and 3 defense strategies when useful." : "Skip long counterargument/defense sections for this short feedback tier."}
 
 ${prompt}`
               }
@@ -473,7 +473,7 @@ ${prompt}`
     const selected = (request.selectedCriteria?.length
       ? request.selectedCriteria
       : ALL_CRITERIA) as AssessmentCriterion[];
-    const feedbackLength = (request.feedbackLengthMinutes ?? 5) as FeedbackLengthMinutes;
+    const feedbackLength = (request.feedbackLengthMinutes ?? 3) as FeedbackLengthMinutes;
     const maxPoints = feedbackLength === 2 ? 2 : 5;
     const maxSynopsisChars = feedbackLength === 2 ? 110 : undefined;
     const maxPointChars = feedbackLength === 2 ? 90 : undefined;
@@ -521,7 +521,7 @@ ${prompt}`
         defenseStrategies: [],
         strategicRecommendations: [],
       };
-    } else if (feedbackLength === 5) {
+    } else if (feedbackLength === 3) {
       missingPoints = missingPoints.slice(0, 3);
       enhancedFeedback = {
         ...enhancedFeedback,
@@ -947,7 +947,7 @@ OUTPUT RULES:
     const selectedCriteria = (request.selectedCriteria?.length
       ? request.selectedCriteria
       : ALL_CRITERIA) as AssessmentCriterion[];
-    const feedbackLength = (request.feedbackLengthMinutes ?? 5) as FeedbackLengthMinutes;
+    const feedbackLength = (request.feedbackLengthMinutes ?? 3) as FeedbackLengthMinutes;
     const maxPoints = feedbackLength === 2 ? 3 : 5;
 
     const stanceContext = request.stance
@@ -1799,35 +1799,35 @@ CRITICAL REQUIREMENTS FOR ACCURACY:
 - NO vague feedback like "be better" - give SPECIFIC strategies with exact wording
 - Enhanced argument should be dramatically improved, not just polished - rewrite with real statistics and examples
 
-CRITICAL - MANDATORY SECTIONS - SCALE EVERYTHING TO THE ${feedbackLength}-MINUTE FEEDBACK TIER. This overrides any instinct to be exhaustive — the ${feedbackLength}-minute tier is read in ${feedbackLength} minutes, not 5 or 7.
+CRITICAL - MANDATORY SECTIONS - SCALE EVERYTHING TO THE ${feedbackLength}-MINUTE FEEDBACK TIER. This overrides any instinct to be exhaustive — the ${feedbackLength}-minute tier is read in ${feedbackLength} minutes, not 3 or 5.
 
-1. "missing_points": ${feedbackLength === 2 ? "Provide exactly 1 short point (one sentence, under 20 words)." : feedbackLength === 5 ? "Provide 2-3 specific points, each 1 sentence." : "Provide 3-5 specific points."} Each should be a logical argument, premise gap, or reasoning framework they could add.
+1. "missing_points": ${feedbackLength === 2 ? "Provide exactly 1 short point (one sentence, under 20 words)." : feedbackLength === 3 ? "Provide 2-3 specific points, each 1 sentence." : "Provide 3-5 specific points."} Each should be a logical argument, premise gap, or reasoning framework they could add.
 
-2. "enhanced_argument": ${feedbackLength === 2 ? 'SKIP this entirely — return "" (empty string). The 2-minute tier UI never shows it, so do not spend output on it.' : feedbackLength === 5 ? "Provide a rewritten version, 100-150 words." : "Provide a completely rewritten version of their speech, 200+ words."} with improved logical structure and reasoning (when included).
+2. "enhanced_argument": ${feedbackLength === 2 ? 'SKIP this entirely — return "" (empty string). The 2-minute tier UI never shows it, so do not spend output on it.' : feedbackLength === 3 ? "Provide a rewritten version, 100-150 words." : "Provide a completely rewritten version of their speech, 200+ words."} with improved logical structure and reasoning (when included).
 
-3. "enhanced_feedback.counter_arguments": ${feedbackLength === 2 ? 'SKIP entirely — return [] (empty array). Not shown in the 2-minute tier.' : feedbackLength === 5 ? "Provide EXACTLY 2 counterarguments." : "Provide EXACTLY 3 counterarguments."} Each item MUST:
+3. "enhanced_feedback.counter_arguments": ${feedbackLength === 2 ? 'SKIP entirely — return [] (empty array). Not shown in the 2-minute tier.' : feedbackLength === 3 ? "Provide EXACTLY 2 counterarguments." : "Provide EXACTLY 3 counterarguments."} Each item MUST:
    - Include "rebuttal" (1-2 sentences of what opponent would say)
    - Include "strength_level" ("High", "Medium", or "Low")
    - Include "supporting_evidence" (the LOGICAL reasoning/framework the opponent would use — never invented statistics, dates, or sources)
    - Include "common_sources" (what TYPE of source this argument typically comes from, e.g. "policy analysis" — not a fabricated citation)
    - Include "key_points" array with 2-4 specific logical talking points
 
-4. "enhanced_feedback.defense_strategies": ${feedbackLength === 2 ? 'SKIP entirely — return [] (empty array). Not shown in the 2-minute tier.' : feedbackLength === 5 ? "Provide EXACTLY 2 defense strategies (one per counterargument)." : "Provide EXACTLY 3 defense strategies (one per counterargument)."} Each item MUST:
+4. "enhanced_feedback.defense_strategies": ${feedbackLength === 2 ? 'SKIP entirely — return [] (empty array). Not shown in the 2-minute tier.' : feedbackLength === 3 ? "Provide EXACTLY 2 defense strategies (one per counterargument)." : "Provide EXACTLY 3 defense strategies (one per counterargument)."} Each item MUST:
    - Include "preemptive_defense" (1-2 sentences, word-for-word phrasing)
    - Include "direct_response" (2-3 sentences, ready to use)
    - Include "redirect_technique" (2-3 sentences, reframing technique)
    - Include "evidence_arsenal" (2-3 LOGICAL reasoning strategies to use — never invented statistics or fabricated sources)
    - Include "key_points" array with 2-4 specific talking points
 
-5. "enhanced_feedback.argument_analysis": MUST include, each field kept to ${feedbackLength === 2 ? "one short sentence" : feedbackLength === 5 ? "1-2 sentences" : "2-3 sentences"}:
+5. "enhanced_feedback.argument_analysis": MUST include, each field kept to ${feedbackLength === 2 ? "one short sentence" : feedbackLength === 3 ? "1-2 sentences" : "2-3 sentences"}:
    - "logical_structure"
    - "evidence_quality"
    - "clarity_score" (1-10 number)
    - "persuasiveness"
 
-6. "enhanced_feedback.strategic_recommendations": ${feedbackLength === 2 ? "SKIP entirely — return [] (empty array)." : feedbackLength === 5 ? "Provide 2-4 strategic recommendations." : "Provide 5-7 strategic recommendations."}
+6. "enhanced_feedback.strategic_recommendations": ${feedbackLength === 2 ? "SKIP entirely — return [] (empty array)." : feedbackLength === 3 ? "Provide 2-4 strategic recommendations." : "Provide 5-7 strategic recommendations."}
 
-Every field must still be present in the JSON (use "" or [] for skipped sections) — but never pad a short-tier section with extra length just to fill space. Brevity is a requirement, not a shortcoming, for the 2 and 5-minute tiers.
+Every field must still be present in the JSON (use "" or [] for skipped sections) — but never pad a short-tier section with extra length just to fill space. Brevity is a requirement, not a shortcoming, for the 2 and 3-minute tiers.
 
 VALIDATION CHECKLIST - Before returning JSON, verify:
 ✓ Every counter_argument.rebuttal references their actual speech (length matches the tier rules above)

@@ -23,9 +23,9 @@ const Recording = () => {
   const stance: string | undefined = location.state?.stance;
   const feedbackLengthMinutes: FeedbackLengthMinutes =
     location.state?.feedbackLengthMinutes === 2 ||
-    location.state?.feedbackLengthMinutes === 7
+    location.state?.feedbackLengthMinutes === 5
       ? location.state.feedbackLengthMinutes
-      : 5;
+      : 3;
   const selectedCriteria: AssessmentCriterion[] = Array.isArray(
     location.state?.selectedCriteria,
   )

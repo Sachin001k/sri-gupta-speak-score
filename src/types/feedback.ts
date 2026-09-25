@@ -1,6 +1,6 @@
 export type AssessmentCriterion = "logic" | "rhetoric" | "empathy" | "delivery";
 
-export type FeedbackLengthMinutes = 2 | 5 | 7;
+export type FeedbackLengthMinutes = 2 | 3 | 5;
 
 export const ALL_CRITERIA: AssessmentCriterion[] = [
   "logic",
