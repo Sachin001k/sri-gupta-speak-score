@@ -574,6 +574,16 @@ ${prompt}`
     return false;
   }
 
+  // Distinct from isLikelyTruncated: catches the model using "..." mid-string as a stylistic
+  // way to trail off a quoted excerpt (e.g. quoting the transcript as `"yes I don't think…"`).
+  // That text isn't structurally truncated (it ends with a period), so isLikelyTruncated
+  // wouldn't flag it — but it's still an ellipsis we don't want to ship, so treat any
+  // occurrence anywhere in the text as a repair signal too.
+  private containsEllipsis(text: string | null | undefined): boolean {
+    if (!text) return false;
+    return /\.\.\.|…/.test(text);
+  }
+
   private needsTruncationRepair(result: ScoreResult): boolean {
     const analysis = result.enhancedFeedback?.argumentAnalysis;
 
@@ -604,8 +614,9 @@ ${prompt}`
         this.isLikelyTruncated(analysis.persuasiveness)
       ) : false) ||
       this.isLikelyTruncated(result.enhancedArgument) ||
-      criterionTexts.some((t) => this.isLikelyTruncated(t)) ||
-      missingPoints.some((t) => this.isLikelyTruncated(t))
+      this.containsEllipsis(result.enhancedArgument) ||
+      criterionTexts.some((t) => this.isLikelyTruncated(t) || this.containsEllipsis(t)) ||
+      missingPoints.some((t) => this.isLikelyTruncated(t) || this.containsEllipsis(t))
     );
   }
 
@@ -618,7 +629,7 @@ ${prompt}`
     const currentAnalysis = current.enhancedFeedback?.argumentAnalysis;
     const stance = (request.stance || 'neutral').toUpperCase();
 
-    const prompt = `The previous response was cut off mid-sentence. Rewrite the following fields COMPLETELY (no truncation).
+    const prompt = `One or more fields in the previous response are incomplete: either genuinely cut off mid-sentence, or trailing off with a "..."/"…" (including inside a quoted excerpt from the transcript, instead of quoting it in full). Rewrite the following fields COMPLETELY — no truncation, and no ellipsis anywhere for any reason.
 
 CONTEXT:
 - Topic: ${request.topic}
@@ -640,6 +651,7 @@ OUTPUT RULES:
 - Return ONLY valid JSON.
 - Keys: logical_structure, evidence_quality, persuasiveness, enhanced_argument, logic_feedback, rhetoric_feedback, empathy_feedback, delivery_feedback, missing_points
 - Each value must be complete (end with punctuation).
+- NEVER use "..." or "…" anywhere in any field, including when quoting the transcript — quote the complete relevant phrase in full, or paraphrase it. A shorter complete quote is always better than a longer one trailed off with an ellipsis.
 - Keep each string field under 1200 characters, using short paragraphs / bullet lines if needed.
 - missing_points must be an array of 3-6 short strings.
 - Do NOT add any other keys.`;
@@ -1595,11 +1607,15 @@ FEEDBACK REQUIREMENTS - ABSOLUTELY MANDATORY:
    - "could be better", "needs improvement", "work on", "try to", "consider", "maybe", "perhaps"
    - Instead: "MUST add [specific logical framework]", "REPLACE [X] with [Y using reasoning type]", "INSERT [specific logical element] at [specific location]"
 
-4b. NEVER end a point with "..." or "…" as a placeholder for content you didn't write out
-   (e.g. never write something like "Add: …" or "Replace with a stronger phrase..."). Every
-   single point, in every section, MUST be a complete, finished sentence or instruction. If a
-   full example would run too long, write a SHORTER complete example instead of cutting it off —
-   an incomplete point is worse than a shorter complete one.
+4b. NEVER use "..." or "…" ANYWHERE in a point — not at the end as a placeholder for content
+   you didn't write out (e.g. never write "Add: …" or "Replace with a stronger phrase..."), and
+   NOT in the middle when quoting the student's transcript either (e.g. never write something
+   like: the run-on sentence starting with "yes I don't think eating a meat…"). When quoting
+   the transcript, quote the COMPLETE relevant phrase or sentence in full, or paraphrase it —
+   never trail off with an ellipsis. Every single point, in every section, MUST be a complete,
+   finished sentence or instruction, with every quoted excerpt also complete. If a full example
+   or quote would run too long, write a SHORTER complete one instead of cutting it off — an
+   incomplete point or quote is worse than a shorter complete one.
 
 5. LOGICAL REASONING FOCUS - CRITICAL:
    - Focus on argument structure, validity, and reasoning quality
