@@ -546,9 +546,14 @@ ${prompt}`
   private isLikelyTruncated(text: string | null | undefined): boolean {
     if (!text) return false;
     const trimmed = text.trim();
-    if (trimmed.length < 120) return false;
-    // If the model ends with an ellipsis, it's usually a truncation symptom.
+    if (!trimmed) return false;
+
+    // A literal ellipsis at the end is an unambiguous truncation signal regardless of
+    // length — check this BEFORE the short-text bailout below, since short points
+    // (e.g. a single list bullet) are exactly where this symptom shows up most.
     if (trimmed.endsWith('…') || trimmed.endsWith('...')) return true;
+
+    if (trimmed.length < 120) return false;
 
     // Common symptom: ends with a 1–2 character word ("o", "co", etc.)
     const lastWord = trimmed.match(/([A-Za-z]+)\s*$/)?.[1];
@@ -571,17 +576,26 @@ ${prompt}`
 
   private needsTruncationRepair(result: ScoreResult): boolean {
     const analysis = result.enhancedFeedback?.argumentAnalysis;
-    const categoryFeedback = result.feedback
-      ? [result.feedback.logic, result.feedback.rhetoric, result.feedback.empathy, result.feedback.delivery]
-          .filter(Boolean)
-          .map((fb) =>
-            typeof fb === "string"
-              ? fb
-              : `${(fb as CriterionFeedback).synopsis}\n${((fb as CriterionFeedback).points || []).join("\n")}`,
-          )
-          .join("\n")
-      : "";
-    const missing = Array.isArray(result.missingPoints) ? result.missingPoints.join("\n") : "";
+
+    // Check each individual point/synopsis on its own — joining them into one blob and
+    // checking only the tail would hide a truncated point that isn't the very last one.
+    const criterionTexts: string[] = [];
+    for (const fb of [
+      result.feedback?.logic,
+      result.feedback?.rhetoric,
+      result.feedback?.empathy,
+      result.feedback?.delivery,
+    ]) {
+      if (!fb) continue;
+      if (typeof fb === "string") {
+        criterionTexts.push(fb);
+      } else {
+        const cf = fb as CriterionFeedback;
+        if (cf.synopsis) criterionTexts.push(cf.synopsis);
+        criterionTexts.push(...(cf.points || []));
+      }
+    }
+    const missingPoints = Array.isArray(result.missingPoints) ? result.missingPoints : [];
 
     return (
       (analysis ? (
@@ -590,8 +604,8 @@ ${prompt}`
         this.isLikelyTruncated(analysis.persuasiveness)
       ) : false) ||
       this.isLikelyTruncated(result.enhancedArgument) ||
-      this.isLikelyTruncated(categoryFeedback) ||
-      this.isLikelyTruncated(missing)
+      criterionTexts.some((t) => this.isLikelyTruncated(t)) ||
+      missingPoints.some((t) => this.isLikelyTruncated(t))
     );
   }
 
@@ -1580,6 +1594,12 @@ FEEDBACK REQUIREMENTS - ABSOLUTELY MANDATORY:
 4. NEVER use vague phrases like:
    - "could be better", "needs improvement", "work on", "try to", "consider", "maybe", "perhaps"
    - Instead: "MUST add [specific logical framework]", "REPLACE [X] with [Y using reasoning type]", "INSERT [specific logical element] at [specific location]"
+
+4b. NEVER end a point with "..." or "…" as a placeholder for content you didn't write out
+   (e.g. never write something like "Add: …" or "Replace with a stronger phrase..."). Every
+   single point, in every section, MUST be a complete, finished sentence or instruction. If a
+   full example would run too long, write a SHORTER complete example instead of cutting it off —
+   an incomplete point is worse than a shorter complete one.
 
 5. LOGICAL REASONING FOCUS - CRITICAL:
    - Focus on argument structure, validity, and reasoning quality

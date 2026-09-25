@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { transcribeWithAssemblyAI, isAssemblyAIAvailable } from "@/services/assemblyAITranscription";
 
+const PREP_SECONDS = 3;
+
 interface RecorderNotice {
   tone: 'error' | 'info';
   title: string;
@@ -31,7 +33,7 @@ export function VoiceRecorder({
 }: VoiceRecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [isPreparing, setIsPreparing] = useState(false);
-  const [prepTime, setPrepTime] = useState(10);
+  const [prepTime, setPrepTime] = useState(PREP_SECONDS);
   const [recordTime, setRecordTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -582,7 +584,7 @@ export function VoiceRecorder({
       }
 
       setIsPreparing(true);
-      setPrepTime(10);
+      setPrepTime(PREP_SECONDS);
 
       prepTimerRef.current = setInterval(() => {
         setPrepTime(prev => {
@@ -683,7 +685,7 @@ export function VoiceRecorder({
     setIsRecording(false);
     isRecordingRef.current = false;
     setIsPreparing(false);
-    setPrepTime(10);
+    setPrepTime(PREP_SECONDS);
     setRecordTime(0);
     setIsPlaying(false);
     setAudioBlob(null);
@@ -773,7 +775,7 @@ export function VoiceRecorder({
   }, []);
 
   const getProgressPercentage = () => {
-    if (isPreparing) return ((10 - prepTime) / 10) * 100;
+    if (isPreparing) return ((PREP_SECONDS - prepTime) / PREP_SECONDS) * 100;
     if (isRecording || isCompleted) return (recordTime / duration) * 100;
     return 0;
   };
