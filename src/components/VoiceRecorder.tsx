@@ -3,7 +3,7 @@ import { Mic, MicOff, Play, Pause, RotateCcw, CheckCircle, Loader2 } from "lucid
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { transcribeWithAssemblyAI, isAssemblyAIAvailable } from "@/services/assemblyAITranscription";
+import { transcribeAudio } from "@/services/transcription";
 
 const PREP_SECONDS = 3;
 
@@ -48,9 +48,7 @@ export function VoiceRecorder({
   const [speechRecognitionSupported, setSpeechRecognitionSupported] = useState(false);
   const [permissionChecked, setPermissionChecked] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [usingAssemblyAIFallback, setUsingAssemblyAIFallback] = useState(false);
   const [showTranscribeButton, setShowTranscribeButton] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
   const [recorderNotice, setRecorderNotice] = useState<RecorderNotice | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -159,30 +157,10 @@ export function VoiceRecorder({
     return removeConsecutiveDuplicates(joined);
   };
   
-  // Check browser support for speech recognition
+  // Browser speech recognition only drives the live preview; the transcript that gets
+  // scored comes from AssemblyAI after recording. Browsers without it just skip the preview.
   useEffect(() => {
-    const isSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
-    setSpeechRecognitionSupported(isSupported);
-    
-    if (!isSupported) {
-      console.warn('Browser speech recognition not supported - will use AssemblyAI fallback');
-      // Always set fallback if webkit is not available
-      setUsingAssemblyAIFallback(true);
-      // Check AssemblyAI availability
-      const assemblyAIAvailable = isAssemblyAIAvailable();
-      if (assemblyAIAvailable) {
-        showInfoNotice(
-          "Using AssemblyAI Transcription",
-          "Your browser doesn't support native speech recognition. Audio will be transcribed using AssemblyAI after recording."
-        );
-      } else {
-        showInfoNotice(
-          "Transcription Limited",
-          "Your browser doesn't support speech recognition. Audio will be recorded but transcription may not be available."
-        );
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setSpeechRecognitionSupported('webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
   }, []);
 
   // Initialize Speech Recognition - matching VoiceAssistant pattern
@@ -262,41 +240,10 @@ export function VoiceRecorder({
           return;
         }
 
-        console.error('Speech recognition error:', event.error);
+        // Live preview errors aren't fatal: the scored transcript comes from AssemblyAI.
+        console.warn('Live preview speech recognition error:', event.error);
         if (event.error === 'not-allowed') {
-          console.error('Microphone permission denied for speech recognition');
-          setUsingAssemblyAIFallback(true); // Use AssemblyAI as fallback
-          showInfoNotice(
-            "Using AssemblyAI Fallback",
-            "Microphone permission denied for live transcription. Audio will be transcribed after recording."
-          );
           setPermissionChecked(true);
-        } else if (event.error === 'aborted') {
-          console.log('Speech recognition aborted');
-          // If aborted and we don't have transcript, use AssemblyAI
-          if (!recognitionTranscriptRef.current.trim()) {
-            setUsingAssemblyAIFallback(true);
-          }
-        } else if (event.error === 'network') {
-          setUsingAssemblyAIFallback(true); // Use AssemblyAI as fallback
-          showInfoNotice(
-            "Using AssemblyAI Fallback",
-            "Network error with speech recognition. Audio will be transcribed after recording."
-          );
-        } else if (event.error === 'service-not-allowed') {
-          setUsingAssemblyAIFallback(true); // Use AssemblyAI as fallback
-          showInfoNotice(
-            "Using AssemblyAI Fallback",
-            "Speech recognition service not available. Audio will be transcribed after recording."
-          );
-        } else {
-          console.error('Speech recognition error:', event.error);
-          // For other errors, enable AssemblyAI fallback
-          setUsingAssemblyAIFallback(true);
-          showInfoNotice(
-            "Using AssemblyAI Fallback",
-            `Speech recognition error: ${event.error}. Audio will be transcribed after recording.`
-          );
         }
       };
       
@@ -354,49 +301,58 @@ export function VoiceRecorder({
     };
   }, []);
 
-  // Handle transcription button click
-  const handleTranscribe = async () => {
-    if (!audioBlob) {
-      showErrorNotice(
-        "No Audio",
-        "Please record audio first."
-      );
-      return;
-    }
-
+  const setFinalTranscript = (text: string) => {
+    updateRecognitionTranscript(text);
+    updateTranscript(text);
     try {
-      console.log('🔄 Starting transcription with AssemblyAI...');
-      setIsTranscribing(true);
-      setShowTranscribeButton(false);
-      updateTranscript("Transcribing audio with AssemblyAI... Please wait.");
-      
-      const transcript = await transcribeWithAssemblyAI(audioBlob);
-      
-      if (transcript && transcript.trim().length > 0) {
-        const cleanedTranscript = removeConsecutiveDuplicates(transcript.trim());
-        updateTranscript(cleanedTranscript);
-        updateRecognitionTranscript(cleanedTranscript);
-        console.log('✅ AssemblyAI transcription successful, length:', cleanedTranscript.length);
-        showInfoNotice("Transcription Complete", "Your speech has been transcribed successfully.");
-        
-        // Update localStorage
-        try {
-          localStorage.setItem(STORAGE_KEY, cleanedTranscript);
-        } catch (e) {
-          console.warn('Failed to save transcript to localStorage:', e);
-        }
-      } else {
-        throw new Error('No transcript returned from AssemblyAI');
-      }
+      localStorage.setItem(STORAGE_KEY, text);
+    } catch (e) {
+      console.warn('Failed to save transcript to localStorage:', e);
+    }
+  };
+
+  // Accurate transcript from AssemblyAI (via the transcribe-audio edge function).
+  // The AssemblyAI text is kept as-is (no duplicate-word cleanup) so repeated words
+  // and filler words reach the scorer. If it fails, fall back to the live preview text.
+  const applyServerTranscription = async (
+    pending: Promise<string>,
+    getBrowserFallback: () => Promise<string> | string
+  ) => {
+    setIsTranscribing(true);
+    setShowTranscribeButton(false);
+    try {
+      const text = await pending;
+      // Wait for live recognition to fully stop so a late result can't append to this text
+      await getBrowserFallback();
+      console.log('✅ AssemblyAI transcription successful, length:', text.length);
+      setFinalTranscript(text);
     } catch (error: any) {
       console.error('❌ AssemblyAI transcription failed:', error);
       const errorMessage = error?.message || 'Unknown error';
-      updateTranscript("Transcription failed. Please try again.");
-      showErrorNotice("Transcription Failed", `Could not transcribe audio: ${errorMessage}`);
-      setShowTranscribeButton(true); // Show button again to retry
+      const browserFallback = await getBrowserFallback();
+      if (browserFallback) {
+        setFinalTranscript(browserFallback);
+        showInfoNotice(
+          "Using live transcript",
+          `High-accuracy transcription failed (${errorMessage}), so the live preview transcript will be scored instead.`
+        );
+      } else {
+        updateTranscript("");
+        showErrorNotice("Transcription Failed", `Could not transcribe audio: ${errorMessage}`);
+        setShowTranscribeButton(true);
+      }
     } finally {
       setIsTranscribing(false);
     }
+  };
+
+  // Retry button after a failed transcription
+  const handleTranscribe = async () => {
+    if (!audioBlob) {
+      showErrorNotice("No Audio", "Please record audio first.");
+      return;
+    }
+    await applyServerTranscription(transcribeAudio(audioBlob), () => "");
   };
 
   // Request speech recognition permission explicitly
@@ -469,119 +425,39 @@ export function VoiceRecorder({
           return;
         }
         
-        const blob = new Blob(chunks, { type: 'audio/webm' });
-        console.log('Audio blob created, size:', blob.size);
+        // Use the recorder's real format (Safari records mp4, not webm)
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+        console.log('Audio blob created, size:', blob.size, 'type:', blob.type);
         setAudioBlob(blob);
         setAudioUrl(URL.createObjectURL(blob));
         setIsCompleted(true);
-        setIsProcessing(true); // Show loader while processing
         stream.getTracks().forEach(track => track.stop());
-        
-        // Wait a bit more to ensure final results are captured
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        // Stop speech recognition and wait for it to finish
-        if (recognition && isListening) {
-          try {
+
+        // Start the AssemblyAI upload right away; collect the live preview text in parallel
+        // so it's ready as a fallback if the server transcription fails.
+        const pending = transcribeAudio(blob);
+        const collectBrowserTranscript = async () => {
+          // Give the browser a moment to deliver its last final results, then stop it
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          // (`isListening` state would be stale in this closure; safeStop checks the ref)
+          if (recognition) {
             safeStopRecognition('recording-stop');
-            // Wait for onend to fire
             await new Promise(resolve => setTimeout(resolve, 500));
-          } catch (e) {
-            console.log('Recognition already stopped');
           }
-        }
-        
-        // Get the final transcript - use recognitionTranscript which has all final results
-        let finalTranscript = removeConsecutiveDuplicates(recognitionTranscriptRef.current.trim());
-        
-        // If recognitionTranscript is empty, try transcript state
-        if (!finalTranscript || finalTranscript.length === 0) {
-          finalTranscript = removeConsecutiveDuplicates(transcriptRef.current.trim());
-        }
-        
-        // Remove any error messages from transcript before checking
-        const cleanTranscript = finalTranscript
-          .replace(/Please speak clearly\. No transcript was captured\./g, '')
-          .replace(/No transcript was captured/g, '')
-          .trim();
-        
-        console.log('🔍 Transcript Debug:');
-        console.log('  recognitionTranscript:', recognitionTranscriptRef.current);
-        console.log('  transcript state:', transcriptRef.current);
-        console.log('  currentTranscript:', currentTranscriptRef.current);
-        console.log('  cleanTranscript:', cleanTranscript);
-        
-        // If we have a transcript from browser speech recognition, use it
-        if (cleanTranscript && cleanTranscript.length > 0) {
-          updateTranscript(cleanTranscript);
-          console.log('✅ Browser transcript captured successfully:', cleanTranscript.substring(0, 100));
-          setIsProcessing(false); // Stop loader
-        } else if (recognitionTranscriptRef.current.trim().length > 0) {
-          // Double check - if recognitionTranscript has content, use it
-          updateTranscript(recognitionTranscriptRef.current.trim());
-          console.log('✅ Using recognitionTranscript:', recognitionTranscriptRef.current.trim().substring(0, 100));
-          setIsProcessing(false); // Stop loader
-        } else if (transcriptRef.current.trim().length > 0 && !transcriptRef.current.includes("No transcript")) {
-          // Triple check - if current transcript state has content, use it
-          updateTranscript(transcriptRef.current.trim());
-          console.log('✅ Using current transcript state:', transcriptRef.current.trim().substring(0, 100));
-          setIsProcessing(false); // Stop loader
-        } else {
-          // Webkit speech recognition FAILED (no transcript) - show transcribe button to use AssemblyAI
-          // Only show button if webkit was attempted (supported) but failed, OR if webkit is not supported
-          const webkitWasAttempted = speechRecognitionSupported && (recognition || isListening);
-          const webkitNotSupported = !speechRecognitionSupported;
-          
-          if (webkitWasAttempted || webkitNotSupported) {
-            console.log('📝 Webkit speech recognition failed or not supported, showing transcribe button for AssemblyAI');
-            setShowTranscribeButton(true);
-            setUsingAssemblyAIFallback(true);
-            updateTranscript(""); // Clear any error messages
-          } else {
-            console.log('⚠️ No transcript but webkit status unclear');
-            updateTranscript("No transcript captured. Please try recording again.");
-          }
-          setIsProcessing(false); // Stop loader
-        }
+          return removeConsecutiveDuplicates(
+            (recognitionTranscriptRef.current.trim() || transcriptRef.current.trim())
+          );
+        };
+        const browserTranscript = collectBrowserTranscript();
+
+        await applyServerTranscription(pending, () => browserTranscript);
       };
 
-      // Start speech recognition when recording starts
-      if (recognition && !isListening && speechRecognitionSupported) {
-        try {
-          updateRecognitionTranscript("");
-          updateTranscript("");
-          updateCurrentTranscript("");
-          // Don’t start here; we start once right when recording begins (after prep)
-          // to avoid double-start races (`InvalidStateError: recognition has already started`).
-        } catch (error: any) {
-          console.error('Speech recognition start error:', error);
-          if (error.name === 'NotAllowedError' || error.message?.includes('not-allowed')) {
-            showErrorNotice(
-              "Transcription Permission Denied",
-              "Microphone permission for transcription was denied. Audio will be recorded, but transcription may not work. Please allow microphone access in your browser settings."
-            );
-            // Will use AssemblyAI fallback after recording
-            if (isAssemblyAIAvailable()) {
-              setUsingAssemblyAIFallback(true);
-              console.log('🔄 Will use AssemblyAI fallback for transcription');
-            }
-          } else {
-            // Avoid restart loops; fall back to AssemblyAI if available.
-            if (isAssemblyAIAvailable()) setUsingAssemblyAIFallback(true);
-          }
-        }
-      } else if (!speechRecognitionSupported) {
-        // Will use AssemblyAI fallback after recording
-        if (isAssemblyAIAvailable()) {
-          setUsingAssemblyAIFallback(true);
-          console.log('🔄 Will use AssemblyAI fallback for transcription');
-        } else {
-          showInfoNotice(
-            "Transcription Not Available",
-            "Speech recognition is not supported in your browser. Audio will be recorded but transcription may not be available."
-          );
-        }
-      }
+      // Clear the previous preview; recognition itself starts once recording begins (after prep)
+      // to avoid double-start races (`InvalidStateError: recognition has already started`).
+      updateRecognitionTranscript("");
+      updateTranscript("");
+      updateCurrentTranscript("");
 
       setIsPreparing(true);
       setPrepTime(PREP_SECONDS);
@@ -599,11 +475,9 @@ export function VoiceRecorder({
               try {
                 safeStartRecognition('recording-start');
               } catch (e) {
-                console.log('Recognition start error:', e);
-                if (isAssemblyAIAvailable()) setUsingAssemblyAIFallback(true);
+                console.log('Live preview recognition start error:', e);
               }
             }
-            // Note: AssemblyAI will be used after recording stops if needed
             
             mediaRecorder.start();
             
@@ -692,7 +566,6 @@ export function VoiceRecorder({
     setAudioUrl("");
     setIsCompleted(false);
     setShowLoader(false);
-    setIsProcessing(false);
     setIsTranscribing(false);
     updateTranscript("");
     updateRecognitionTranscript("");
@@ -741,16 +614,9 @@ export function VoiceRecorder({
         finalTranscript = transcriptRef.current.trim();
       }
       
-      // Clean any error messages from transcript and remove duplicates
-      const cleanedForSubmit = removeConsecutiveDuplicates(
-        finalTranscript
-          .replace(/Please speak clearly\. No transcript was captured\./g, '')
-          .replace(/No transcript was captured/g, '')
-          .replace(/please speak clearly/gi, '')
-          .replace(/Transcribing audio\.\.\. Please wait\./g, '')
-          .replace(/Transcription.*?\./g, '')
-          .trim()
-      );
+      // Status messages are never written into the transcript, and repeated words are
+      // left in on purpose (they matter for fluency scoring), so submit it as-is.
+      const cleanedForSubmit = finalTranscript;
       
       console.log('📤 Submitting recording:');
       console.log('  Original transcript:', finalTranscript.substring(0, 100));
@@ -882,11 +748,11 @@ export function VoiceRecorder({
                   ? "Transcribing..." 
                   : isCompleted 
                     ? "Transcript" 
-                    : "Live transcript"}
+                    : "Live preview"}
               </span>
               {!isCompleted && !isTranscribing && (
                 <span className="text-xs text-muted-foreground">
-                  {usingAssemblyAIFallback ? "Will transcribe with AssemblyAI after recording" : "Updating in real time"}
+                  Final transcript is generated after recording
                 </span>
               )}
               {isTranscribing && (
@@ -901,7 +767,7 @@ export function VoiceRecorder({
               {isTranscribing ? (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Transcribing your speech using AssemblyAI...</span>
+                  <span>Transcribing your speech...</span>
                 </div>
               ) : (
                 displayTranscript
@@ -909,12 +775,7 @@ export function VoiceRecorder({
             </div>
             {showTranscribeButton && !isTranscribing && (
               <p className="text-xs text-muted-foreground">
-                ℹ️ Click "Transcribe" button to transcribe your audio using AssemblyAI
-              </p>
-            )}
-            {usingAssemblyAIFallback && !isTranscribing && !showTranscribeButton && (
-              <p className="text-xs text-muted-foreground">
-                ℹ️ Using AssemblyAI for transcription (browser speech recognition not available)
+                ℹ️ Click "Transcribe" to try again
               </p>
             )}
           </div>
@@ -964,19 +825,8 @@ export function VoiceRecorder({
                 </Button>
               </div>
               
-              {/* Show loader while processing after recording */}
-              {isProcessing && (
-                <Button
-                  disabled
-                  className="w-full bg-gradient-primary hover:opacity-90 border-0 text-white font-semibold py-3 h-12"
-                >
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Processing...
-                </Button>
-              )}
-              
-              {/* Show Transcribe button if no transcript and not currently transcribing or processing */}
-              {!isProcessing && showTranscribeButton && !isTranscribing && (
+              {/* Retry button if transcription failed */}
+              {showTranscribeButton && !isTranscribing && (
                 <Button
                   onClick={handleTranscribe}
                   className="w-full bg-gradient-primary hover:opacity-90 border-0 text-white font-semibold py-3 h-12"
@@ -987,7 +837,7 @@ export function VoiceRecorder({
               )}
               
               {/* Show loader while transcribing */}
-              {!isProcessing && isTranscribing && (
+              {isTranscribing && (
                 <Button
                   disabled
                   className="w-full bg-gradient-primary hover:opacity-90 border-0 text-white font-semibold py-3 h-12"
@@ -998,7 +848,7 @@ export function VoiceRecorder({
               )}
               
               {/* Show Get My Score button only if we have a transcript and not processing */}
-              {!isProcessing && !showTranscribeButton && !isTranscribing && transcript.trim().length > 0 && (
+              {!showTranscribeButton && !isTranscribing && transcript.trim().length > 0 && (
                 !showLoader ? (
                   <Button
                     onClick={submitRecording}
