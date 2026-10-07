@@ -64,7 +64,7 @@ _Based on a review of the current codebase (Sep 2026). This is a living section 
 
 - **Auth**: Supabase email/password login, forgot-password flow. Signup page exists (`src/pages/Signup.tsx`) but is not wired into a route — accounts are currently created by an admin.
 - **Debate practice flow**: pick a topic/theme, choose stance/duration/feedback length/criteria, record via `MediaRecorder`, live preview via the Web Speech API, final transcript from AssemblyAI (filler words kept) through the `transcribe-audio` edge function — the API key is a Supabase secret, never shipped to the browser.
-- **AI scoring**: Gemini-based analysis (logic/rhetoric/empathy/delivery), with multi-key rotation, truncated-response repair, and a mock-score fallback if the AI call fails.
+- **AI scoring**: Gemini-based analysis (logic/rhetoric/empathy/delivery) through the `gemini-proxy` edge function (keys in the `GEMINI_API_KEYS` Supabase secret, logged-in users only), with multi-key rotation, truncated-response repair, and a mock-score fallback if the AI call fails.
 - **Results view**: scorecard, tabbed breakdown (transcript, missing points, enhanced argument, analysis, counterarguments, defense strategies), share button.
 - **Progress & gamification**: points, levels, streaks, achievement badges, per-criterion "speaker profile," and a "Past Debates Vault" to reopen old sessions.
 - **Profile page**: view/edit display name.
@@ -75,17 +75,15 @@ _Based on a review of the current codebase (Sep 2026). This is a living section 
 
 ### 🚧 To-Do / Known Gaps
 
-- **Revoke the old AssemblyAI key** (`f51919e6…`) that used to be hardcoded in the frontend — it's still in git history.
+- **Revoke old keys still in public git history**: the AssemblyAI key `f51919e6…` and the Google/Gemini keys committed between Aug 2025 and Feb 2026.
 - **Clean up dead/duplicate code**:
   - `src/lib/supabase.ts` — unused mock client (the real one is `src/integrations/supabase/client.ts`).
   - `src/components/ProgressTracker.tsx` — superseded by logic now inlined in `Progress.tsx`.
   - `src/components/NewsletterSection.tsx` — older marketing section with a simulated (fake) subscribe call; superseded by `NewsletterSubscribeBlock.tsx`.
   - `src/pages/Home.tsx` — legacy duplicate of `Index.tsx`, only reachable at `/old`.
-  - `src/services/simpleTranscription.ts`, `whisperTranscription.ts`, `speechToText.ts` — alternate transcription paths not currently used by `VoiceRecorder`.
 - **No automated tests** — no unit/integration/e2e test setup exists yet.
-- **Admin topic RLS is fully open** (`topics` and `newsletter_subscriptions` policies allow anyone to read/write) — should be tightened to admin-only writes now that a `role` column exists.
+- **Major-version dependency upgrades**: `react-router-dom` v7 (open-redirect advisories) and `tailwindcss` v4 (build-time advisories) need breaking upgrades.
 - **No pagination** on the admin subscriber table or the "Past Debates Vault" — will need it once data volume grows.
-- **Manual Gemini API key modal** (`ApiKeyModal.tsx`) is mostly redundant now that env-based key rotation exists — decide whether to keep or remove.
 
 ### 📋 From user/pilot feedback (Sep 2026 review)
 

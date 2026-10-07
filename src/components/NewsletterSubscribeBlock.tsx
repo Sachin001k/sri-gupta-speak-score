@@ -29,12 +29,6 @@ export function NewsletterSubscribeBlock() {
   >("idle");
   const [error, setError] = useState("");
 
-  const topicsEqual = (a: string[], b: string[]) => {
-    const sa = [...a].sort().join(",");
-    const sb = [...b].sort().join(",");
-    return sa === sb;
-  };
-
   // Auto-fill email when user is logged in; restore saved topics if any
   useEffect(() => {
     if (!user?.email) return;
@@ -42,18 +36,14 @@ export function NewsletterSubscribeBlock() {
     setEmail(user.email);
 
     const loadExisting = async () => {
-      const { data, error: fetchError } = await supabase
-        .from("newsletter_subscriptions")
-        .select("topics")
-        .eq("email", user.email.trim().toLowerCase())
-        .maybeSingle();
+      const { data, error: fetchError } = await supabase.rpc("my_newsletter_topics");
 
       if (fetchError) {
         console.warn("Could not load newsletter preferences:", fetchError.message);
         return;
       }
-      if (data?.topics?.length) {
-        setCategories(new Set(data.topics));
+      if (data?.length) {
+        setCategories(new Set(data));
       }
     };
 
@@ -86,64 +76,23 @@ export function NewsletterSubscribeBlock() {
     const topics = Array.from(categories);
 
     try {
-      const { data: existing, error: lookupError } = await supabase
-        .from("newsletter_subscriptions")
-        .select("id, user_id, email, topics")
-        .eq("email", trimmedEmail)
-        .maybeSingle();
+      // Runs server-side (see the security_hardening migration) so visitors never need
+      // read access to other subscribers' emails.
+      const { data: outcome, error: rpcError } = await supabase.rpc("subscribe_newsletter", {
+        p_email: trimmedEmail,
+        p_topics: topics,
+      });
 
-      if (lookupError) throw lookupError;
+      if (rpcError) throw rpcError;
 
-      if (existing) {
-        if (
-          user?.id &&
-          existing.user_id &&
-          existing.user_id !== user.id
-        ) {
-          setError("This email is already subscribed.");
-          setSubmitState("idle");
-          return;
-        }
-        if (!user?.id && existing.user_id) {
-          setError("This email is already subscribed.");
-          setSubmitState("idle");
-          return;
-        }
-        if (topicsEqual(existing.topics ?? [], topics)) {
-          setSubmitState("already_subscribed");
-          return;
-        }
-
-        const { error: updateError } = await supabase
-          .from("newsletter_subscriptions")
-          .update({
-            topics,
-            user_id: user?.id ?? existing.user_id,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", existing.id);
-
-        if (updateError) throw updateError;
-      } else {
-        const { error: insertError } = await supabase
-          .from("newsletter_subscriptions")
-          .insert({
-            email: trimmedEmail,
-            topics,
-            user_id: user?.id ?? null,
-          });
-
-        if (insertError) {
-          if (
-            insertError.code === "23505" ||
-            insertError.message?.toLowerCase().includes("duplicate") ||
-            insertError.message?.toLowerCase().includes("unique")
-          ) {
-            setSubmitState("already_subscribed");
-            return;
-          }
-          throw insertError;
-        }
+      if (outcome === "taken") {
+        setError("This email is already subscribed.");
+        setSubmitState("idle");
+        return;
+      }
+      if (outcome === "unchanged") {
+        setSubmitState("already_subscribed");
+        return;
       }
 
       setSubmitState("success");

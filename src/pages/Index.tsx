@@ -6,7 +6,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MotionCard, type SpeechStartOptions } from "@/components/MotionCard";
 import { VoiceRecorder } from "@/components/VoiceRecorder";
 import { ScoreDisplay } from "@/components/ScoreDisplay";
-import { ApiKeyModal } from "@/components/ApiKeyModal";
 import { NewsletterSubscribeBlock } from "@/components/NewsletterSubscribeBlock";
 import { motions as allMotionsData, type Motion } from "@/data/motions";
 import { aiService } from "@/services/aiService";
@@ -77,7 +76,6 @@ const Index = () => {
   const [currentState, setCurrentState] = useState<AppState>("home");
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
   const [scoreData, setScoreData] = useState<any>(null);
-  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [recorderResetCounter, setRecorderResetCounter] = useState(0);
   const [selectedTheme, setSelectedTheme] = useState<string>("All Themes");
@@ -253,15 +251,6 @@ const Index = () => {
       setCurrentState("recording");
       resetSessionForRetry();
       resetRecorderComponent();
-    }
-  };
-
-  const handleApiKeySet = (apiKey: string) => {
-    aiService.setApiKey(apiKey);
-    
-    // Continue with AI analysis if we have a pending recording
-    if (sessionData?.audioBlob) {
-      handleRecordingComplete(sessionData.audioBlob, "Transcript would be generated here");
     }
   };
 
@@ -626,13 +615,6 @@ const Index = () => {
           </Card>
         </div>
       </div>
-
-      {/* API Key Modal */}
-      <ApiKeyModal
-        isOpen={showApiKeyModal}
-        onApiKeySet={handleApiKeySet}
-        onClose={() => setShowApiKeyModal(false)}
-      />
 
       {/* Loading Overlay for AI Analysis */}
       {isAnalyzing && (

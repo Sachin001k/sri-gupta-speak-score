@@ -316,7 +316,12 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      is_admin: { Args: Record<PropertyKey, never>; Returns: boolean }
+      my_newsletter_topics: { Args: Record<PropertyKey, never>; Returns: string[] | null }
+      subscribe_newsletter: {
+        Args: { p_email: string; p_topics: string[] }
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never

@@ -1,3 +1,5 @@
+import { FunctionsHttpError } from "@supabase/supabase-js";
+import { supabase } from "@/integrations/supabase/client";
 import {
   ALL_CRITERIA,
   CRITERION_MAX,
@@ -100,30 +102,22 @@ function toCriterionFeedback(raw: unknown, fallback = "No feedback provided."): 
   return { synopsis: fallback, points: [fallback] };
 }
 
-interface ApiKeyCandidate {
-  key: string;
-  isManual: boolean;
-  envIndex?: number;
-}
-
 export class AIService {
-  private manualApiKey: string | null = null;
-  private envApiKeys: string[] = [];
-  private nextEnvIndex = 0;
-
-  constructor() {
-    const rawKeys = import.meta.env.VITE_GEMINI_API_KEYS || "";
-    this.envApiKeys = rawKeys
-      .split(",")
-      .map((key) => key.trim())
-      .filter(Boolean);
-    this.manualApiKey = this.loadManualKeyFromStorage();
-  }
-
-  setApiKey(key: string) {
-    const sanitized = key.trim();
-    this.manualApiKey = sanitized.length > 0 ? sanitized : null;
-    this.persistManualKey(this.manualApiKey);
+  /**
+   * Gemini is called through the `gemini-proxy` Supabase Edge Function, which holds the API
+   * keys (GEMINI_API_KEYS secret), rotates between them, and only serves logged-in users.
+   * Returns a Response so callers can keep handling status codes and bodies as before.
+   */
+  private async postToGemini(payload: unknown): Promise<Response> {
+    const { data, error } = await supabase.functions.invoke("gemini-proxy", { body: payload });
+    if (error) {
+      if (error instanceof FunctionsHttpError) return error.context as Response;
+      throw error;
+    }
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   /**
@@ -215,7 +209,6 @@ IMPORTANT:
     const feedbackLength = (request.feedbackLengthMinutes ?? 3) as FeedbackLengthMinutes;
 
     try {
-      const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
       const payload = {
         contents: [
           {
@@ -238,7 +231,7 @@ PERSONALIZATION RULES (MANDATORY):
    - Maximum 5 points. Each point is ONE short actionable bullet — not a wall of text.
    - Do NOT dump ALL-CAPS section labels into one paragraph.
 3. Feedback length tiers:
-   - 2 min: synopsis + up to 3 short points; skip or heavily trim enhanced_argument / long counters.
+   - 2 min: one-sentence synopsis + up to 2 short points, each a complete sentence; skip enhanced_argument / long counters.
    - 3 min: synopsis + up to 5 points; moderate missing_points (≤3).
    - 5 min: synopsis + up to 5 detailed points; fuller enhanced_feedback and counters.
 4. Unselected criteria: set score to 0 and omit feedback (or empty object).
@@ -275,77 +268,30 @@ ${prompt}`
         }
       };
 
-      const candidates = this.buildApiKeyCandidates();
-      if (candidates.length === 0) {
-        throw new Error('API key not set. Please provide your Google Gemini API key.');
-      }
-
-      let lastError: Error | null = null;
-
-      for (let attemptIndex = 0; attemptIndex < candidates.length; attemptIndex++) {
-        const candidate = candidates[attemptIndex];
-        let response: Response;
-
-        try {
-          console.log(`📡 Calling Gemini 2.5 Flash API (key ${attemptIndex + 1}/${candidates.length})...`);
-          console.log(`🔑 Using API key: ${candidate.key.substring(0, 10)}... (${candidate.isManual ? 'manual' : 'env'})`);
-          
-          // NO TIMEOUT - wait indefinitely for response
-          response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': candidate.key,
-            },
-            body: JSON.stringify(payload),
-            // NO signal - wait indefinitely
-          });
-        } catch (fetchError) {
-          lastError = fetchError instanceof Error ? fetchError : new Error(String(fetchError));
-          // Network errors - don't rotate, throw immediately
-          console.error('❌ Network error with API key:', lastError);
-          throw lastError;
-        }
+      {
+        console.log('📡 Calling Gemini via gemini-proxy...');
+        // Key rotation happens server-side in the gemini-proxy function.
+        const response = await this.postToGemini(payload);
 
         if (!response.ok) {
           const errorText = await response.text();
           const errorMessage = this.buildErrorMessage(response.status, response.statusText, errorText);
-          lastError = new Error(errorMessage);
-
-          // ONLY rotate on 400 (Bad Request) or 429 (Rate Limit)
-          if ((response.status === 400 || response.status === 429) && attemptIndex < candidates.length - 1) {
-            console.warn(`⚠️ Status ${response.status} received, rotating to next API key`);
-            continue;
-          }
-
-          // For all other errors (401, 403, etc.) - throw immediately, don't rotate
-          console.error(`❌ API error ${response.status}, not rotating:`, errorMessage);
-          throw lastError;
+          console.error(`❌ API error ${response.status}:`, errorMessage);
+          throw new Error(errorMessage);
         }
 
         let data: any;
         try {
           data = await response.json();
         } catch (jsonError) {
-          lastError = jsonError instanceof Error ? jsonError : new Error(String(jsonError));
-          // JSON parse errors - don't rotate, throw immediately
-          console.error('❌ JSON parse error, not rotating:', lastError);
-          throw lastError;
+          console.error('❌ JSON parse error:', jsonError);
+          throw jsonError instanceof Error ? jsonError : new Error(String(jsonError));
         }
 
         if (data.error) {
-          const errorCode = data.error.code || data.error.errorCode || 0;
-          lastError = new Error(`AI API error: ${data.error.message || JSON.stringify(data.error)}`);
-          
-          // ONLY rotate on 400 or 429 error codes
-          if ((errorCode === 400 || errorCode === 429) && attemptIndex < candidates.length - 1) {
-            console.warn(`⚠️ Error code ${errorCode} received, rotating to next API key`);
-            continue;
-          }
-          
-          // For all other errors - throw immediately, don't rotate
-          console.error(`❌ API error code ${errorCode}, not rotating:`, lastError);
-          throw lastError;
+          const error = new Error(`AI API error: ${data.error.message || JSON.stringify(data.error)}`);
+          console.error('❌ API error:', error);
+          throw error;
         }
 
         if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0]) {
@@ -364,7 +310,6 @@ ${prompt}`
           throw emptyResponseError;
         }
 
-        this.markEnvKeyAsUsed(candidate);
         console.log('✅ API call successful, parsing response...');
         console.log('═══════════════════════════════════════════════════════════');
         console.log('📥 RAW GEMINI RESPONSE - FULL TEXT:');
@@ -425,11 +370,11 @@ ${prompt}`
         if (this.needsTruncationRepair(parsedResult)) {
           console.warn('⚠️ Detected truncated AI output; requesting a repaired completion...');
           try {
-            parsedResult = await this.repairTruncatedOutput(parsedResult, request, candidate.key);
+            parsedResult = await this.repairTruncatedOutput(parsedResult, request);
             // Rarely, even the repair can truncate; retry once more.
             if (this.needsTruncationRepair(parsedResult)) {
               console.warn('⚠️ Repair output still appears truncated; retrying repair once...');
-              parsedResult = await this.repairTruncatedOutput(parsedResult, request, candidate.key);
+              parsedResult = await this.repairTruncatedOutput(parsedResult, request);
             }
           } catch (repairError) {
             console.warn('⚠️ Truncation repair failed; returning original parsed result.', repairError);
@@ -445,9 +390,6 @@ ${prompt}`
 
         return this.applyPersonalizationFilters(parsedResult, request);
       }
-
-      console.warn('All Gemini API keys failed; returning friendly fallback message.', lastError);
-      throw new Error(AIService.GEMINI_ALL_KEYS_BUSY_MESSAGE);
     } catch (error) {
       console.error('AI analysis failed:', error);
       if (error instanceof Error) {
@@ -475,10 +417,8 @@ ${prompt}`
       : ALL_CRITERIA) as AssessmentCriterion[];
     const feedbackLength = (request.feedbackLengthMinutes ?? 3) as FeedbackLengthMinutes;
     const maxPoints = feedbackLength === 2 ? 2 : 5;
-    const maxSynopsisChars = feedbackLength === 2 ? 110 : undefined;
-    const maxPointChars = feedbackLength === 2 ? 90 : undefined;
-    const truncate = (text: string, max?: number) =>
-      max && text.length > max ? `${text.slice(0, max - 1)}…` : text;
+    // Brevity for the 2-minute tier is enforced in the prompt. Never cut text mid-sentence
+    // with "…" here — that's what made feedback points look broken.
 
     const score = {
       logic: selected.includes("logic") ? result.score.logic : 0,
@@ -492,8 +432,8 @@ ${prompt}`
     const trimFb = (fb: CriterionFeedback | undefined): CriterionFeedback | undefined => {
       if (!fb) return undefined;
       return {
-        synopsis: truncate(fb.synopsis, maxSynopsisChars),
-        points: (fb.points || []).slice(0, maxPoints).map((p) => truncate(p, maxPointChars)),
+        synopsis: fb.synopsis,
+        points: (fb.points || []).slice(0, maxPoints),
       };
     };
 
@@ -513,7 +453,7 @@ ${prompt}`
       // The 2-minute tier's UI never shows enhanced argument / counters / defense / strategy
       // sections (see ScoreDisplay's `shortTier`), so there's no reason to keep them at all —
       // trimming them to nothing also avoids wasting generation time on unread content.
-      missingPoints = missingPoints.slice(0, 1).map((p) => truncate(p, 120));
+      missingPoints = missingPoints.slice(0, 1);
       enhancedArgument = "";
       enhancedFeedback = {
         ...enhancedFeedback,
@@ -623,9 +563,7 @@ ${prompt}`
   private async repairTruncatedOutput(
     current: ScoreResult,
     request: SpeechAnalysisRequest,
-    apiKey: string
   ): Promise<ScoreResult> {
-    const apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
     const currentAnalysis = current.enhancedFeedback?.argumentAnalysis;
     const stance = (request.stance || 'neutral').toUpperCase();
 
@@ -666,14 +604,7 @@ OUTPUT RULES:
       },
     };
 
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify(payload),
-    });
+    const response = await this.postToGemini(payload);
 
     if (!response.ok) {
       throw new Error(`Repair request failed (${response.status})`);
@@ -740,53 +671,6 @@ OUTPUT RULES:
     return next;
   }
 
-  private buildApiKeyCandidates(): ApiKeyCandidate[] {
-    const candidates: ApiKeyCandidate[] = [];
-    const seen = new Set<string>();
-
-    if (this.manualApiKey) {
-      candidates.push({ key: this.manualApiKey, isManual: true });
-      seen.add(this.manualApiKey);
-    }
-
-    const envCount = this.envApiKeys.length;
-    for (let i = 0; i < envCount; i++) {
-      const index = (this.nextEnvIndex + i) % envCount;
-      const key = this.envApiKeys[index];
-      if (!key || seen.has(key)) continue;
-      candidates.push({ key, isManual: false, envIndex: index });
-      seen.add(key);
-    }
-
-    return candidates;
-  }
-
-
-  private markEnvKeyAsUsed(candidate: ApiKeyCandidate): void {
-    if (!candidate.isManual && typeof candidate.envIndex === "number" && this.envApiKeys.length > 0) {
-      this.nextEnvIndex = (candidate.envIndex + 1) % this.envApiKeys.length;
-    }
-  }
-
-  private loadManualKeyFromStorage(): string | null {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    const storedKey = window.localStorage.getItem('gemini_api_key');
-    return storedKey ? storedKey.trim() : null;
-  }
-
-  private persistManualKey(key: string | null): void {
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (key) {
-      window.localStorage.setItem('gemini_api_key', key);
-    } else {
-      window.localStorage.removeItem('gemini_api_key');
-    }
-  }
-
   private buildErrorMessage(status: number, statusText: string, errorText: string): string {
     console.error('API request failed:', status, statusText);
     console.error('Error response body:', errorText);
@@ -826,15 +710,10 @@ OUTPUT RULES:
     return errorMessage;
   }
 
-  private static readonly GEMINI_ALL_KEYS_BUSY_MESSAGE = 'Gemini is on a latte break and every API key is busy dancing with tokens. Take a breath, sip something cozy, and try again in a minute.';
-
   private async callGeminiText(
     prompt: string,
     generationConfig: { temperature?: number; maxOutputTokens?: number } = {},
   ): Promise<string> {
-    const apiUrl =
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
-
     const payload = {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
@@ -846,71 +725,23 @@ OUTPUT RULES:
       },
     };
 
-    const candidates = this.buildApiKeyCandidates();
-    if (candidates.length === 0) {
-      throw new Error("API key not set. Please provide your Google Gemini API key.");
+    const response = await this.postToGemini(payload);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(this.buildErrorMessage(response.status, response.statusText, errorText));
     }
 
-    let lastError: Error | null = null;
-
-    for (let attemptIndex = 0; attemptIndex < candidates.length; attemptIndex++) {
-      const candidate = candidates[attemptIndex];
-      let response: Response;
-
-      try {
-        response = await fetch(apiUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": candidate.key,
-          },
-          body: JSON.stringify(payload),
-        });
-      } catch (fetchError) {
-        lastError = fetchError instanceof Error ? fetchError : new Error(String(fetchError));
-        throw lastError;
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        const errorMessage = this.buildErrorMessage(response.status, response.statusText, errorText);
-        lastError = new Error(errorMessage);
-
-        // Rotate only for transient-ish issues.
-        if ((response.status === 400 || response.status === 429) && attemptIndex < candidates.length - 1) {
-          continue;
-        }
-        throw lastError;
-      }
-
-      let data: any;
-      try {
-        data = await response.json();
-      } catch (jsonError) {
-        lastError = jsonError instanceof Error ? jsonError : new Error(String(jsonError));
-        throw lastError;
-      }
-
-      if (data?.error) {
-        const errorCode = data.error.code || data.error.errorCode || 0;
-        lastError = new Error(`AI API error: ${data.error.message || JSON.stringify(data.error)}`);
-        if ((errorCode === 400 || errorCode === 429) && attemptIndex < candidates.length - 1) {
-          continue;
-        }
-        throw lastError;
-      }
-
-      const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) {
-        throw new Error("Empty response from AI service");
-      }
-
-      this.markEnvKeyAsUsed(candidate);
-      return text;
+    const data: any = await response.json();
+    if (data?.error) {
+      throw new Error(`AI API error: ${data.error.message || JSON.stringify(data.error)}`);
     }
 
-    console.warn("All Gemini API keys failed; returning last error.", lastError);
-    throw lastError ?? new Error(AIService.GEMINI_ALL_KEYS_BUSY_MESSAGE);
+    const text: string | undefined = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      throw new Error("Empty response from AI service");
+    }
+    return text;
   }
 
   private parseJsonFromModelText(text: string): any {
@@ -948,7 +779,7 @@ OUTPUT RULES:
       ? request.selectedCriteria
       : ALL_CRITERIA) as AssessmentCriterion[];
     const feedbackLength = (request.feedbackLengthMinutes ?? 3) as FeedbackLengthMinutes;
-    const maxPoints = feedbackLength === 2 ? 3 : 5;
+    const maxPoints = feedbackLength === 2 ? 2 : 5;
 
     const stanceContext = request.stance
       ? `\n\n⚠️ CRITICAL: The speaker is arguing ${request.stance.toUpperCase()} this motion. You MUST evaluate whether their arguments effectively support their chosen stance. If they argue ${request.stance === 'for' ? 'AGAINST' : 'FOR'} when they should argue ${request.stance.toUpperCase()}, this is a MAJOR flaw. Their logic, evidence, and rhetoric must align with arguing ${request.stance.toUpperCase()}.`
@@ -963,6 +794,8 @@ For EACH selected criterion return:
   "<criterion>_feedback": { "synopsis": "1-2 sentences", "points": ["short bullet", ...] }
 Rules:
 - At most ${maxPoints} points per criterion
+${feedbackLength === 2 ? `- SHORT TIER: synopsis is ONE complete sentence of at most 18 words; each point is ONE complete sentence of at most 15 words. Shorten by choosing fewer words, never by cutting a sentence off.
+` : ""}- Every synopsis and point must be a complete sentence. Never end with "..." or "…", and when quoting the speaker, quote a short phrase in full rather than trailing off.
 - Points must be separate bullets, not one dense paragraph
 - Do not invent ALL-CAPS section headers inside a single string
 - Do not score unselected criteria (use 0)
